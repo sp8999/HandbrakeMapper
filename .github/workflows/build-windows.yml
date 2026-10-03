@@ -1,0 +1,37 @@
+name: Build Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y --no-progress
+
+      - name: Build app and bundled installer
+        shell: powershell
+        run: .\scripts\build-release.ps1
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: HandbrakeMapper-Windows-x64
+          path: dist/installer/*.exe
+
+      - name: Upload source publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: HandbrakeMapper-App
+          path: dist/app/*
