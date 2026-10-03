@@ -31,13 +31,38 @@ dotnet publish (Join-Path $Root "src\HandbrakeMapper\HandbrakeMapper.csproj") `
     -o $Dist
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
 
-$IsccCandidates = @(
-    "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-)
-$Iscc = $IsccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (!$Iscc) { throw "Inno Setup 6 not found. Install it first." }
+# Locate Inno Setup robustly. GitHub-hosted Windows runners install the
+# Chocolatey package under Program Files (x86), but Chocolatey's PATH update
+# is not guaranteed to be visible in the same job step.
+$Iscc = $null
 
+$Command = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+if ($Command) {
+    $Iscc = $Command.Source
+}
+
+if (!$Iscc) {
+    $ProgramFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+    $ProgramFiles64 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+
+    $IsccCandidates = @(
+        (Join-Path $ProgramFilesX86 "Inno Setup 6\ISCC.exe"),
+        (Join-Path $ProgramFiles64 "Inno Setup 6\ISCC.exe"),
+        "C:\ProgramData\chocolatey\bin\ISCC.exe",
+        "C:\tools\InnoSetup\ISCC.exe"
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    $Iscc = $IsccCandidates | Select-Object -First 1
+}
+
+if (!$Iscc) {
+    Write-Host "Checked common Inno Setup locations:"
+    Write-Host "  ProgramFilesX86 = $([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86))"
+    Write-Host "  ProgramFiles    = $([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles))"
+    throw "Inno Setup 6 (ISCC.exe) not found after installation."
+}
+
+Write-Host "Using Inno Setup compiler: $Iscc"
 Write-Host "Building installer..."
 & $Iscc (Join-Path $Root "installer\HandbrakeMapper.iss")
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
