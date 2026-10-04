@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using HandbrakeMapper.Models;
+using Microsoft.Win32;
 
 namespace HandbrakeMapper.Services;
 
@@ -12,7 +13,12 @@ public sealed class JoystickService
     private const uint JOYCAPS_HASU = 0x0004;
     private const uint JOYCAPS_HASV = 0x0008;
 
-    public sealed record DeviceInfo(int Id, string Name, IReadOnlyList<AxisKind> Axes, int ButtonCount);
+    public sealed record DeviceInfo(
+        int Id,
+        string Name,
+        string OemKey,
+        IReadOnlyList<AxisKind> Axes,
+        int ButtonCount);
 
     public sealed record State(uint X, uint Y, uint Z, uint R, uint U, uint V, uint Buttons)
     {
@@ -55,7 +61,8 @@ public sealed class JoystickService
             if ((caps.wCaps & JOYCAPS_HASU) != 0) axes.Add(AxisKind.U);
             if ((caps.wCaps & JOYCAPS_HASV) != 0) axes.Add(AxisKind.V);
 
-            result.Add(new DeviceInfo((int)id, caps.szPname.TrimEnd('\0'), axes, (int)caps.wNumButtons));
+            var identity = ResolveDeviceIdentity((int)id, caps);
+            result.Add(new DeviceInfo((int)id, identity.Name, identity.OemKey, axes, (int)caps.wNumButtons));
         }
 
         return result;
@@ -79,6 +86,62 @@ public sealed class JoystickService
         state = new State(info.dwXpos, info.dwYpos, info.dwZpos, info.dwRpos, info.dwUpos, info.dwVpos, info.dwButtons);
         return true;
     }
+
+    private static (string Name, string OemKey) ResolveDeviceIdentity(int id, JOYCAPS caps)
+    {
+        var fallback = Clean(caps.szPname);
+        if (string.IsNullOrWhiteSpace(fallback))
+            fallback = $"Joystick {id + 1}";
+
+        var regKey = Clean(caps.szRegKey);
+        if (string.IsNullOrWhiteSpace(regKey))
+            regKey = "DINPUT.DLL";
+
+        var currentSettingsPath =
+            $@"System\CurrentControlSet\Control\MediaResources\Joystick\{regKey}\CurrentJoystickSettings";
+
+        string oemKey = string.Empty;
+
+        foreach (var root in new[] { Registry.CurrentUser, Registry.LocalMachine })
+        {
+            try
+            {
+                using var current = root.OpenSubKey(currentSettingsPath);
+                oemKey = Clean(current?.GetValue($"Joystick{id + 1}OEMName") as string);
+                if (!string.IsNullOrWhiteSpace(oemKey))
+                    break;
+            }
+            catch
+            {
+                // Fall back to the WinMM driver name below.
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(oemKey))
+            return (fallback, string.Empty);
+
+        var oemPath =
+            $@"System\CurrentControlSet\Control\MediaProperties\PrivateProperties\Joystick\OEM\{oemKey}";
+
+        foreach (var root in new[] { Registry.CurrentUser, Registry.LocalMachine })
+        {
+            try
+            {
+                using var oem = root.OpenSubKey(oemPath);
+                var name = Clean(oem?.GetValue("OEMName") as string);
+                if (!string.IsNullOrWhiteSpace(name))
+                    return (name, oemKey);
+            }
+            catch
+            {
+                // Keep looking in the other registry hive.
+            }
+        }
+
+        return (fallback, oemKey);
+    }
+
+    private static string Clean(string? value) => (value ?? string.Empty).Trim().TrimEnd('\0');
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct JOYCAPS
