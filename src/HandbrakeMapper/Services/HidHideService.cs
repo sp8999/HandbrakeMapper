@@ -8,7 +8,7 @@ namespace HandbrakeMapper.Services;
 
 public sealed class HidHideService
 {
-    private const uint DIGCF_PRESENT = 0x00000002;
+    private const uint DIGCF_PRESENT = 0x00000002;\n    private const uint DIGCF_DEVICEINTERFACE = 0x00000010;
     private const uint SPDRP_DEVICEDESC = 0x00000000;
     private const uint SPDRP_FRIENDLYNAME = 0x0000000C;
     private const int ERROR_NO_MORE_ITEMS = 259;
@@ -118,7 +118,7 @@ public sealed class HidHideService
     {
         HidD_GetHidGuid(out var hidGuid);
 
-        var set = SetupDiGetClassDevsW(ref hidGuid, null, IntPtr.Zero, DIGCF_PRESENT);
+        var set = SetupDiGetClassDevsW(ref hidGuid, null, IntPtr.Zero, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
         if (set == new IntPtr(-1))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "SetupDiGetClassDevs failed.");
 
