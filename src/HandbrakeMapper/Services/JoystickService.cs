@@ -62,6 +62,12 @@ public sealed class JoystickService
             if ((caps.wCaps & JOYCAPS_HASV) != 0) axes.Add(AxisKind.V);
 
             var identity = ResolveDeviceIdentity((int)id, caps);
+
+            // vJoy is the application's output device, never a physical input.
+            // Keeping it in this list makes it possible to create a vJoy -> app -> vJoy loop.
+            if (IsVJoy(identity.Name, identity.OemKey))
+                continue;
+
             result.Add(new DeviceInfo((int)id, identity.Name, identity.OemKey, axes, (int)caps.wNumButtons));
         }
 
@@ -139,6 +145,12 @@ public sealed class JoystickService
         }
 
         return (fallback, oemKey);
+    }
+
+    private static bool IsVJoy(string name, string oemKey)
+    {
+        return name.Contains("vJoy", StringComparison.OrdinalIgnoreCase) ||
+               oemKey.Contains("vJoy", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Clean(string? value) => (value ?? string.Empty).Trim().TrimEnd('\0');
