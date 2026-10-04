@@ -5,6 +5,7 @@ public sealed class AppSettings
     public int DeviceId { get; set; } = -1;
     public string DeviceName { get; set; } = string.Empty;
     public AxisKind Axis { get; set; } = AxisKind.X;
+    public bool AxisOutputEnabled { get; set; } = true;
     public uint CalibrationMin { get; set; } = 0;
     public uint CalibrationMax { get; set; } = 65535;
     public decimal DeadzonePercent { get; set; } = 2;
