@@ -21,7 +21,7 @@ public sealed class MainForm : Form
     private readonly Label _outputValue = new() { AutoSize = true, Text = "0.0%" };
     private readonly NumericUpDown _deadzone = new() { Minimum = 0, Maximum = 25, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
     private readonly CheckBox _invert = new() { Text = "軸を反転" };
-    private readonly CheckBox _buttonEnabled = new() { Text = "ボタン入力も出力する" };
+    private readonly CheckBox _buttonEnabled = new() { Text = "ボタン入力" };
     private readonly CheckBox _hide = new() { Text = "元の物理デバイスをHidHideで隠す", Checked = true, AutoSize = true };
     private readonly Button _start = new() { Text = "START", Width = 170, Height = 42 };
     private readonly Button _refresh = new() { Text = "再検索", Width = 80 };
@@ -40,7 +40,7 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1.1";
+        Text = "Handbrake Mapper 0.1.2";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
