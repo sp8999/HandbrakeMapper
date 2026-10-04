@@ -21,6 +21,7 @@ public sealed class MainForm : Form
     private readonly Label _outputValue = new() { AutoSize = true, Text = "0.0%" };
     private readonly NumericUpDown _deadzone = new() { Minimum = 0, Maximum = 25, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
     private readonly CheckBox _invert = new() { Text = "軸を反転" };
+    private readonly CheckBox _axisEnabled = new() { Text = "軸入力", Checked = true };
     private readonly CheckBox _buttonEnabled = new() { Text = "ボタン入力" };
     private readonly CheckBox _hide = new() { Text = "元の物理デバイスをHidHideで隠す", Checked = true, AutoSize = true };
     private readonly Button _start = new() { Text = "START", Width = 170, Height = 42 };
@@ -40,7 +41,7 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1.2";
+        Text = "Handbrake Mapper 0.1.3";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
@@ -69,7 +70,7 @@ public sealed class MainForm : Form
         Controls.Add(root);
 
         root.Controls.Add(Title("Handbrake Mapper"));
-        root.Controls.Add(Note("USBハンドブレーキのアナログ軸だけをvJoyへ出力します。ACRを含むレースシム共通で使えます。"));
+        root.Controls.Add(Note("USBハンドブレーキの軸入力とボタン入力を選んでvJoyへ出力します。ACRを含むレースシム共通で使えます。"));
 
         root.Controls.Add(Section("入力デバイス"));
         root.Controls.Add(Row(new Label { Text = "Device", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _device, _refresh));
@@ -84,8 +85,9 @@ public sealed class MainForm : Form
         root.Controls.Add(Row(_setMin, _setMax, _calibration));
         root.Controls.Add(Row(new Label { Text = "Deadzone", Width = 70 }, _deadzone, new Label { Text = "%", AutoSize = true }, _invert));
 
-        root.Controls.Add(Section("ボタン（任意）"));
-        root.Controls.Add(Row(_buttonEnabled, new Label { Text = "Source", AutoSize = true }, _button, new Label { Text = "→ vJoy Button 1", AutoSize = true }));
+        root.Controls.Add(Section("入力方式"));
+        root.Controls.Add(Row(_axisEnabled, _buttonEnabled));
+        root.Controls.Add(Row(new Label { Text = "Button Source", AutoSize = true }, _button, new Label { Text = "→ vJoy Button 1", AutoSize = true }));
 
         root.Controls.Add(Section("デバイス非表示"));
         root.Controls.Add(_hide);
@@ -147,7 +149,8 @@ public sealed class MainForm : Form
         _setMax.Click += (_, _) => SetCalibration(min: false);
         _deadzone.ValueChanged += (_, _) => SaveUiToSettings();
         _invert.CheckedChanged += (_, _) => SaveUiToSettings();
-        _buttonEnabled.CheckedChanged += (_, _) => { _button.Enabled = _buttonEnabled.Checked; SaveUiToSettings(); };
+        _axisEnabled.CheckedChanged += (_, _) => { UpdateInputModeControls(); SaveUiToSettings(); };
+        _buttonEnabled.CheckedChanged += (_, _) => { UpdateInputModeControls(); SaveUiToSettings(); };
         _button.SelectedIndexChanged += (_, _) => SaveUiToSettings();
         _hide.CheckedChanged += (_, _) => SaveUiToSettings();
         _start.Click += async (_, _) => await ToggleStartAsync();
@@ -165,8 +168,9 @@ public sealed class MainForm : Form
     {
         _deadzone.Value = Math.Clamp(_settings.DeadzonePercent, _deadzone.Minimum, _deadzone.Maximum);
         _invert.Checked = _settings.Invert;
+        _axisEnabled.Checked = _settings.AxisOutputEnabled;
         _buttonEnabled.Checked = _settings.ButtonOutputEnabled;
-        _button.Enabled = _buttonEnabled.Checked;
+        UpdateInputModeControls();
         _hide.Checked = _settings.HidePhysicalDevice;
         UpdateCalibrationLabel();
     }
@@ -236,6 +240,7 @@ public sealed class MainForm : Form
             _settings.Axis = parsed;
         _settings.DeadzonePercent = _deadzone.Value;
         _settings.Invert = _invert.Checked;
+        _settings.AxisOutputEnabled = _axisEnabled.Checked;
         _settings.ButtonOutputEnabled = _buttonEnabled.Checked;
         if (_button.SelectedIndex >= 0) _settings.SourceButton = _button.SelectedIndex + 1;
         _settings.HidePhysicalDevice = _hide.Checked;
@@ -419,6 +424,7 @@ public sealed class MainForm : Form
 
     private double PreviewNormalize(uint raw)
     {
+        if (!_axisEnabled.Checked) return 0;
         if (_settings.CalibrationMax == _settings.CalibrationMin) return 0;
         var value = ((double)raw - _settings.CalibrationMin) / ((double)_settings.CalibrationMax - _settings.CalibrationMin);
         value = Math.Clamp(value, 0, 1);
@@ -481,7 +487,7 @@ public sealed class MainForm : Form
 
             _mapper.Start(_settings);
             SetRunningUi(true);
-            _status.Text = "Mapping active. ゲーム側では vJoy Device の X Axis をHandbrakeに割り当ててください。";
+            _status.Text = "Mapping active. ゲーム側では vJoy Device の入力をHandbrakeに割り当ててください。";
         }
         catch (Exception ex)
         {
@@ -501,16 +507,25 @@ public sealed class MainForm : Form
     {
         _start.Text = running ? "STOP" : "START";
         _device.Enabled = !running;
-        _axis.Enabled = !running;
         _refresh.Enabled = !running;
         _detectDevice.Enabled = !running;
-        _detectAxis.Enabled = !running;
-        _setMin.Enabled = !running;
-        _setMax.Enabled = !running;
-        _deadzone.Enabled = !running;
-        _invert.Enabled = !running;
+        _axisEnabled.Enabled = !running;
         _buttonEnabled.Enabled = !running;
-        _button.Enabled = !running && _buttonEnabled.Checked;
         _hide.Enabled = !running;
+        UpdateInputModeControls();
+    }
+
+    private void UpdateInputModeControls()
+    {
+        var editable = !_mapper.IsRunning;
+
+        _axis.Enabled = editable && _axisEnabled.Checked;
+        _detectAxis.Enabled = editable && _axisEnabled.Checked;
+        _setMin.Enabled = editable && _axisEnabled.Checked;
+        _setMax.Enabled = editable && _axisEnabled.Checked;
+        _deadzone.Enabled = editable && _axisEnabled.Checked;
+        _invert.Enabled = editable && _axisEnabled.Checked;
+
+        _button.Enabled = editable && _buttonEnabled.Checked;
     }
 }
