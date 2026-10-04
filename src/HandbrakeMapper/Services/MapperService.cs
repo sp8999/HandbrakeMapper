@@ -15,6 +15,7 @@ public sealed class MapperService : IAsyncDisposable
     private uint _max;
     private double _deadzone;
     private bool _invert;
+    private bool _axisEnabled;
     private bool _buttonEnabled;
     private int _button;
 
@@ -34,7 +35,9 @@ public sealed class MapperService : IAsyncDisposable
     {
         if (IsRunning) return;
         if (settings.DeviceId < 0) throw new InvalidOperationException("Select an input device first.");
-        if (settings.CalibrationMax == settings.CalibrationMin)
+        if (!settings.AxisOutputEnabled && !settings.ButtonOutputEnabled)
+            throw new InvalidOperationException("Enable Axis Input or Button Input before starting.");
+        if (settings.AxisOutputEnabled && settings.CalibrationMax == settings.CalibrationMin)
             throw new InvalidOperationException("0% and 100% calibration points must be different.");
 
         _deviceId = settings.DeviceId;
@@ -43,6 +46,7 @@ public sealed class MapperService : IAsyncDisposable
         _max = settings.CalibrationMax;
         _deadzone = Math.Clamp((double)settings.DeadzonePercent / 100.0, 0.0, 0.95);
         _invert = settings.Invert;
+        _axisEnabled = settings.AxisOutputEnabled;
         _buttonEnabled = settings.ButtonOutputEnabled;
         _button = settings.SourceButton;
         LastError = null;
@@ -81,7 +85,7 @@ public sealed class MapperService : IAsyncDisposable
                 }
 
                 var raw = state.GetAxis(_axis);
-                var normalized = Normalize(raw);
+                var normalized = _axisEnabled ? Normalize(raw) : 0.0;
                 var button = _buttonEnabled && state.GetButton(_button);
 
                 LastRaw = raw;
