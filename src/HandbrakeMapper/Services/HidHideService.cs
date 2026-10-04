@@ -158,7 +158,7 @@ public sealed class HidHideService
     private static string GetInstanceId(IntPtr set, ref SP_DEVINFO_DATA info)
     {
         var buffer = new StringBuilder(1024);
-        if (!SetupDiGetDeviceInstanceIdW(set, ref info, buffer, buffer.Capacity, out _))
+        if (!SetupDiGetDeviceInstanceIdW(set, ref info, buffer, (uint)buffer.Capacity, out _))
             return string.Empty;
         return buffer.ToString();
     }
@@ -256,7 +256,7 @@ public sealed class HidHideService
     [DllImport("hid.dll")]
     private static extern void HidD_GetHidGuid(out Guid hidGuid);
 
-    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("setupapi.dll", EntryPoint = "SetupDiGetClassDevsW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern IntPtr SetupDiGetClassDevsW(
         ref Guid classGuid,
         string? enumerator,
@@ -269,15 +269,15 @@ public sealed class HidHideService
         uint memberIndex,
         ref SP_DEVINFO_DATA deviceInfoData);
 
-    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDeviceInstanceIdW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern bool SetupDiGetDeviceInstanceIdW(
         IntPtr deviceInfoSet,
         ref SP_DEVINFO_DATA deviceInfoData,
         StringBuilder deviceInstanceId,
-        int deviceInstanceIdSize,
-        out int requiredSize);
+        uint deviceInstanceIdSize,
+        out uint requiredSize);
 
-    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("setupapi.dll", EntryPoint = "SetupDiGetDeviceRegistryPropertyW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern bool SetupDiGetDeviceRegistryPropertyW(
         IntPtr deviceInfoSet,
         ref SP_DEVINFO_DATA deviceInfoData,
