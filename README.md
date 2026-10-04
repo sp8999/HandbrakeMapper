@@ -4,7 +4,7 @@ USBハンドブレーキの入力を整理して、レースシムで使いや�
 
 特に、**レバーを引くと「アナログ軸」と「ボタン」が同時に入力されるタイプのハンドブレーキ**で、ゲーム側が正しく認識しない場合に役立ちます。
 
-Handbrake Mapperでは、通常のアナログ軸入力を使いながら、**同時に送られているボタン入力だけをON / OFFできます**。
+Handbrake Mapperでは、**軸入力とボタン入力をそれぞれ個別にON / OFFできます**。
 
 たとえば次のような場合に使用できます。
 
@@ -12,12 +12,12 @@ Handbrake Mapperでは、通常のアナログ軸入力を使いながら、**�
 - しかし同時に送られるボタン入力のせいで、ゲーム内ではON / OFFを繰り返すなどの誤動作が起きる
 - ボタン入力だけを無効にして、アナログ軸だけを使いたい
 
-`ボタン入力` をOFFにすると、ボタン信号を除外して**アナログ軸だけをvJoyへ出力**します。
+`軸入力` と `ボタン入力` は独立して設定できます。
 
-`ボタン入力` をONにすると、**アナログ軸 + ボタン入力の両方**をvJoyへ出力します。
-
-> 現在のバージョンではアナログ軸入力は常時使用します。  
-> 「軸をOFFにして、ボタンだけを使用する」モードにはまだ対応していません。
+- 軸入力 ON / ボタン入力 OFF → アナログ軸だけを出力
+- 軸入力 ON / ボタン入力 ON → アナログ軸とボタンを両方出力
+- 軸入力 OFF / ボタン入力 ON → ボタンだけを出力
+- 軸入力 OFF / ボタン入力 OFF → 入力がないためSTARTできません
 
 主に Assetto Corsa Rally のように、Windows上では正常なのにゲーム側だけ物理ハンドブレーキのHID入力を正しく扱えないケースの回避を目的としています。
 
@@ -32,6 +32,7 @@ Handbrake Mapperでは、通常のアナログ軸入力を使いながら、**�
 - 0% / 100% キャリブレーション
 - デッドゾーン設定
 - 軸反転
+- 軸入力のON / OFF
 - ボタン入力のON / OFF
 - vJoyへ仮想コントローラーとして出力
 - HidHideで元の物理ハンドブレーキをゲームから隠す
@@ -49,6 +50,7 @@ Handbrake Mapper
   - Min / Max calibration
   - Deadzone
   - Invert
+  - Axis input ON / OFF
   - Button input ON / OFF
         |
         v
@@ -69,7 +71,7 @@ HandbrakeMapper.exe ----------> can still read the device
 4. レバーを完全に離した状態で `現在値を 0%` を押します。
 5. レバーを最大まで引いた状態で `現在値を 100%` を押します。
 6. 必要に応じて `Deadzone` や `軸を反転` を設定します。
-7. ボタン入力が不要な場合は `ボタン入力` をOFFにします。ボタン入力も使用したい場合はONにします。
+7. `軸入力` と `ボタン入力` から、ゲームへ送りたい入力方式を選びます。
 8. `元の物理デバイスをHidHideで隠す` をONにして `START` を押します。
 9. レースシム側のハンドブレーキ設定で、`vJoy Device` の入力を割り当てます。
 
@@ -82,8 +84,7 @@ HidHideの設定を初めて変更するときは、WindowsのUAC確認が表示
 ### RT31
 
 - 軸入力 + ボタン入力を同時に出力するタイプ
-- Handbrake Mapperでボタン入力を無効化し、軸入力のみを使用可能
-- Amazon: [RT31 商品ページ](https://link.amazon/B00UwlMXS)
+- 軸のみ、軸 + ボタン、ボタンのみの各モードで使用可能
 
 ほかの一般的なUSBゲームコントローラー形式のハンドブレーキでも使用できるように設計しています。
 
@@ -114,7 +115,7 @@ Inno Setup 6をインストールしてから:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-ビルドすると `HandbrakeMapper_Setup_0.1.2.exe` が生成されます。
+ビルドすると `HandbrakeMapper_Setup_0.1.3.exe` が生成されます。
 
 ## 注意
 
@@ -141,7 +142,7 @@ It is especially useful for handbrakes that send **an analog axis and a button a
 
 Some racing games may misinterpret this combination even though the handbrake works normally in Windows. This can cause symptoms such as the handbrake rapidly switching ON and OFF by itself.
 
-Handbrake Mapper lets you keep the normal analog handbrake movement while independently enabling or disabling the extra button signal.
+Handbrake Mapper lets you independently enable or disable the analog axis input and the button input.
 
 For example:
 
@@ -150,12 +151,12 @@ For example:
 - That extra button signal causes incorrect behavior in a game.
 - You want to remove only the button signal and keep the analog handbrake.
 
-With **Button Input** disabled, Handbrake Mapper ignores the button signal and sends **only the analog axis** to vJoy.
+**Axis Input** and **Button Input** can be configured independently.
 
-With **Button Input** enabled, it sends **both the analog axis and the button input** to vJoy.
-
-> In the current version, analog axis input is always enabled.  
-> A button-only mode with the analog axis disabled is not supported yet.
+- Axis ON / Button OFF → analog axis only
+- Axis ON / Button ON → analog axis + button
+- Axis OFF / Button ON → button only
+- Axis OFF / Button OFF → START is blocked because no input is enabled
 
 The original motivation for this project was to work around handbrake input problems in games such as Assetto Corsa Rally, where the device may work correctly in Windows but be interpreted incorrectly by the game.
 
@@ -170,6 +171,7 @@ There is no game-specific code, so Handbrake Mapper can also be used with other 
 - 0% / 100% calibration
 - Deadzone adjustment
 - Axis inversion
+- Axis input ON / OFF
 - Button input ON / OFF
 - Output through a virtual vJoy controller
 - Hide the original physical handbrake from games with HidHide
@@ -207,7 +209,7 @@ HandbrakeMapper.exe ----------> can still read the device
 4. Fully release the lever and click `現在値を 0%` / Set Current Value to 0%.
 5. Pull the lever fully and click `現在値を 100%` / Set Current Value to 100%.
 6. Adjust `Deadzone` or `Invert Axis` if necessary.
-7. Turn `Button Input` OFF if you want to remove the extra button signal. Turn it ON if you want to use both axis and button input.
+7. Choose the input mode you want to send to the game with `Axis Input` and `Button Input`.
 8. Enable `Hide physical device with HidHide` and click `START`.
 9. In your racing simulator's handbrake settings, assign the input from `vJoy Device`.
 
@@ -220,8 +222,7 @@ If the original physical handbrake is still visible to the game, disconnect and 
 ### RT31
 
 - Sends both analog axis and button input
-- Tested with Button Input disabled so only the analog axis is passed through
-- Amazon: [RT31 product page](https://link.amazon/B00UwlMXS)
+- Supports axis-only, axis + button, and button-only output modes
 
 The application is designed to work with other standard USB game-controller-style handbrakes as well.
 
@@ -252,7 +253,7 @@ Install Inno Setup 6 first, then run:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-This generates `HandbrakeMapper_Setup_0.1.2.exe`.
+This generates `HandbrakeMapper_Setup_0.1.3.exe`.
 
 ## Notes
 
