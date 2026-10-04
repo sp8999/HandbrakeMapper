@@ -1,11 +1,18 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace HandbrakeMapper.Services;
 
 public sealed class HidHideService
 {
+    private const uint DIGCF_PRESENT = 0x00000002;
+    private const uint SPDRP_DEVICEDESC = 0x00000000;
+    private const uint SPDRP_FRIENDLYNAME = 0x0000000C;
+    private const int ERROR_NO_MORE_ITEMS = 259;
+
     public string? CliPath { get; }
     public bool IsInstalled => CliPath is not null;
 
@@ -21,64 +28,53 @@ public sealed class HidHideService
         CliPath = candidates.FirstOrDefault(File.Exists);
     }
 
-    public async Task<List<string>> FindDevicePathsAsync(string joystickName, CancellationToken cancellationToken = default)
+    public Task<List<string>> FindDevicePathsAsync(
+        string joystickName,
+        string oemKey,
+        CancellationToken cancellationToken = default)
     {
-        if (CliPath is null)
-            throw new InvalidOperationException("HidHideCLI.exe was not found.");
+        cancellationToken.ThrowIfCancellationRequested();
 
-        var json = await RunCaptureAsync(CliPath, "--dev-gaming", cancellationToken);
-        if (string.IsNullOrWhiteSpace(json))
-            return [];
+        var devices = EnumeratePresentHidDevices();
+        var vidPid = ExtractVidPid(oemKey);
 
-        using var document = JsonDocument.Parse(json);
-        var target = Normalize(joystickName);
-        var bestScore = 0;
-        var bestCount = 0;
-        List<string> best = [];
-
-        foreach (var group in document.RootElement.EnumerateArray())
+        if (!string.IsNullOrWhiteSpace(vidPid))
         {
-            var friendly = group.TryGetProperty("friendlyName", out var fn) ? fn.GetString() ?? string.Empty : string.Empty;
-            var friendlyNorm = Normalize(friendly);
-            var paths = new List<string>();
-            var productHit = false;
+            var byVidPid = devices
+                .Where(d => d.InstanceId.Contains(vidPid, StringComparison.OrdinalIgnoreCase))
+                .Select(d => d.InstanceId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-            if (group.TryGetProperty("devices", out var devices))
-            {
-                foreach (var dev in devices.EnumerateArray())
-                {
-                    if (dev.TryGetProperty("deviceInstancePath", out var dip))
-                    {
-                        var path = dip.GetString();
-                        if (!string.IsNullOrWhiteSpace(path)) paths.Add(path);
-                    }
-                    if (dev.TryGetProperty("product", out var product))
-                    {
-                        var p = Normalize(product.GetString() ?? string.Empty);
-                        if (!string.IsNullOrEmpty(p) && (p.Contains(target) || target.Contains(p)))
-                            productHit = true;
-                    }
-                }
-            }
-
-            var score = 0;
-            if (!string.IsNullOrEmpty(target) && friendlyNorm == target) score = 100;
-            else if (!string.IsNullOrEmpty(target) && (friendlyNorm.Contains(target) || target.Contains(friendlyNorm))) score = 80;
-            else if (productHit) score = 70;
-
-            if (score > bestScore && paths.Count > 0)
-            {
-                bestScore = score;
-                bestCount = 1;
-                best = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            }
-            else if (score > 0 && score == bestScore && paths.Count > 0)
-            {
-                bestCount++;
-            }
+            if (byVidPid.Count > 0)
+                return Task.FromResult(byVidPid);
         }
 
-        return bestScore >= 70 && bestCount == 1 ? best : [];
+        var target = Normalize(joystickName);
+        if (string.IsNullOrWhiteSpace(target))
+            return Task.FromResult(new List<string>());
+
+        var scored = devices
+            .Select(d => new
+            {
+                Device = d,
+                Score = MatchScore(target, Normalize(d.FriendlyName), Normalize(d.Description))
+            })
+            .Where(x => x.Score > 0)
+            .ToList();
+
+        if (scored.Count == 0)
+            return Task.FromResult(new List<string>());
+
+        var bestScore = scored.Max(x => x.Score);
+        var best = scored.Where(x => x.Score == bestScore).ToList();
+
+        // Name-only matching is deliberately conservative. With no VID/PID hint,
+        // hide only a unique matching HID node to avoid hiding the wrong controller.
+        if (best.Count != 1)
+            return Task.FromResult(new List<string>());
+
+        return Task.FromResult(new List<string> { best[0].Device.InstanceId });
     }
 
     public async Task ApplyHiddenAsync(string appPath, IReadOnlyCollection<string> paths, CancellationToken cancellationToken = default)
@@ -118,29 +114,95 @@ public sealed class HidHideService
         await RunElevatedScriptAsync(script.ToString(), cancellationToken);
     }
 
-    private static async Task<string> RunCaptureAsync(string file, string arguments, CancellationToken cancellationToken)
+    private static List<HidPnpDevice> EnumeratePresentHidDevices()
     {
-        using var process = new Process
+        HidD_GetHidGuid(out var hidGuid);
+
+        var set = SetupDiGetClassDevsW(ref hidGuid, null, IntPtr.Zero, DIGCF_PRESENT);
+        if (set == new IntPtr(-1))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetupDiGetClassDevs failed.");
+
+        try
         {
-            StartInfo = new ProcessStartInfo
+            var result = new List<HidPnpDevice>();
+
+            for (uint index = 0; ; index++)
             {
-                FileName = file,
-                Arguments = arguments,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
+                var info = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
+                if (!SetupDiEnumDeviceInfo(set, index, ref info))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error == ERROR_NO_MORE_ITEMS)
+                        break;
+                    throw new Win32Exception(error, "SetupDiEnumDeviceInfo failed.");
+                }
+
+                var instanceId = GetInstanceId(set, ref info);
+                if (string.IsNullOrWhiteSpace(instanceId))
+                    continue;
+
+                var friendly = GetRegistryProperty(set, ref info, SPDRP_FRIENDLYNAME);
+                var description = GetRegistryProperty(set, ref info, SPDRP_DEVICEDESC);
+
+                result.Add(new HidPnpDevice(instanceId, friendly, description));
             }
-        };
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        var output = await stdout;
-        var error = await stderr;
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"HidHideCLI failed ({process.ExitCode}): {error}");
-        return output;
+
+            return result;
+        }
+        finally
+        {
+            SetupDiDestroyDeviceInfoList(set);
+        }
+    }
+
+    private static string GetInstanceId(IntPtr set, ref SP_DEVINFO_DATA info)
+    {
+        var buffer = new StringBuilder(1024);
+        if (!SetupDiGetDeviceInstanceIdW(set, ref info, buffer, buffer.Capacity, out _))
+            return string.Empty;
+        return buffer.ToString();
+    }
+
+    private static string GetRegistryProperty(IntPtr set, ref SP_DEVINFO_DATA info, uint property)
+    {
+        var buffer = new byte[4096];
+        if (!SetupDiGetDeviceRegistryPropertyW(
+                set,
+                ref info,
+                property,
+                out _,
+                buffer,
+                (uint)buffer.Length,
+                out var required))
+            return string.Empty;
+
+        var length = Math.Min((int)required, buffer.Length);
+        if (length <= 2)
+            return string.Empty;
+
+        return Encoding.Unicode.GetString(buffer, 0, length).TrimEnd('\0', ' ', '\r', '\n');
+    }
+
+    private static string ExtractVidPid(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var match = Regex.Match(
+            value,
+            @"VID_[0-9A-F]{4}&PID_[0-9A-F]{4}",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        return match.Success ? match.Value : string.Empty;
+    }
+
+    private static int MatchScore(string target, string friendly, string description)
+    {
+        if (friendly == target || description == target) return 100;
+        if ((!string.IsNullOrEmpty(friendly) && (friendly.Contains(target) || target.Contains(friendly))) ||
+            (!string.IsNullOrEmpty(description) && (description.Contains(target) || target.Contains(description))))
+            return 70;
+        return 0;
     }
 
     private static async Task RunElevatedScriptAsync(string contents, CancellationToken cancellationToken)
@@ -179,4 +241,52 @@ public sealed class HidHideService
     }
 
     private static string Ps(string value) => value.Replace("'", "''");
+
+    private sealed record HidPnpDevice(string InstanceId, string FriendlyName, string Description);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SP_DEVINFO_DATA
+    {
+        public uint cbSize;
+        public Guid ClassGuid;
+        public uint DevInst;
+        public IntPtr Reserved;
+    }
+
+    [DllImport("hid.dll")]
+    private static extern void HidD_GetHidGuid(out Guid hidGuid);
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr SetupDiGetClassDevsW(
+        ref Guid classGuid,
+        string? enumerator,
+        IntPtr hwndParent,
+        uint flags);
+
+    [DllImport("setupapi.dll", SetLastError = true)]
+    private static extern bool SetupDiEnumDeviceInfo(
+        IntPtr deviceInfoSet,
+        uint memberIndex,
+        ref SP_DEVINFO_DATA deviceInfoData);
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool SetupDiGetDeviceInstanceIdW(
+        IntPtr deviceInfoSet,
+        ref SP_DEVINFO_DATA deviceInfoData,
+        StringBuilder deviceInstanceId,
+        int deviceInstanceIdSize,
+        out int requiredSize);
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool SetupDiGetDeviceRegistryPropertyW(
+        IntPtr deviceInfoSet,
+        ref SP_DEVINFO_DATA deviceInfoData,
+        uint property,
+        out uint propertyRegDataType,
+        byte[] propertyBuffer,
+        uint propertyBufferSize,
+        out uint requiredSize);
+
+    [DllImport("setupapi.dll", SetLastError = true)]
+    private static extern bool SetupDiDestroyDeviceInfoList(IntPtr deviceInfoSet);
 }
