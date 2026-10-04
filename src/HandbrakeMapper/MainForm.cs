@@ -40,7 +40,7 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1";
+        Text = "Handbrake Mapper 0.1.1";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
