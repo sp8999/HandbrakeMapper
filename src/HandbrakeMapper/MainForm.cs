@@ -25,6 +25,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _hide = new() { Text = "元の物理デバイスをHidHideで隠す", Checked = true, AutoSize = true };
     private readonly Button _start = new() { Text = "START", Width = 170, Height = 42 };
     private readonly Button _refresh = new() { Text = "再検索", Width = 80 };
+    private readonly Button _detectDevice = new() { Text = "動かしてデバイス検出", Width = 160 };
     private readonly Button _detectAxis = new() { Text = "軸を自動検出", Width = 120 };
     private readonly Button _setMin = new() { Text = "現在値を 0%", Width = 110 };
     private readonly Button _setMax = new() { Text = "現在値を 100%", Width = 110 };
@@ -41,7 +42,7 @@ public sealed class MainForm : Form
 
         Text = "Handbrake Mapper 0.1";
         Width = 590;
-        Height = 720;
+        Height = 750;
         MinimumSize = new Size(590, 700);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9F);
@@ -61,7 +62,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(18),
             ColumnCount = 1,
-            RowCount = 20,
+            RowCount = 22,
             AutoScroll = true
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -72,6 +73,7 @@ public sealed class MainForm : Form
 
         root.Controls.Add(Section("入力デバイス"));
         root.Controls.Add(Row(new Label { Text = "Device", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _device, _refresh));
+        root.Controls.Add(Row(new Label { Text = "", Width = 70 }, _detectDevice));
         root.Controls.Add(Row(new Label { Text = "Axis", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _axis, _detectAxis));
 
         root.Controls.Add(Section("入力モニター"));
@@ -137,6 +139,7 @@ public sealed class MainForm : Form
     private void WireEvents()
     {
         _refresh.Click += (_, _) => RefreshDevices();
+        _detectDevice.Click += async (_, _) => await DetectDeviceAsync();
         _device.SelectedIndexChanged += (_, _) => DeviceChanged();
         _axis.SelectedIndexChanged += (_, _) => SaveUiToSettings();
         _detectAxis.Click += async (_, _) => await DetectAxisAsync();
@@ -171,18 +174,29 @@ public sealed class MainForm : Form
     private void RefreshDevices()
     {
         var oldName = _settings.DeviceName;
+        var oldId = _settings.DeviceId;
+
         _devices = _joystick.Enumerate();
         _device.Items.Clear();
-        foreach (var d in _devices) _device.Items.Add(d.Name);
+
+        foreach (var d in _devices)
+            _device.Items.Add($"{d.Name}  [Joy {d.Id + 1}]");
 
         var selected = -1;
-        if (_settings.DeviceId >= 0)
-            selected = _devices.ToList().FindIndex(d => d.Id == _settings.DeviceId && d.Name == oldName);
+
+        // Prefer the WinMM slot. This keeps an existing selection after upgrading
+        // from the old generic "Microsoft PC joystick driver" display name.
+        if (oldId >= 0)
+            selected = _devices.ToList().FindIndex(d => d.Id == oldId);
+
         if (selected < 0 && !string.IsNullOrWhiteSpace(oldName))
             selected = _devices.ToList().FindIndex(d => d.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase));
-        if (selected < 0 && _devices.Count > 0) selected = 0;
 
-        if (selected >= 0) _device.SelectedIndex = selected;
+        if (selected < 0 && _devices.Count > 0)
+            selected = 0;
+
+        if (selected >= 0)
+            _device.SelectedIndex = selected;
         else
         {
             _axis.Items.Clear();
@@ -234,6 +248,92 @@ public sealed class MainForm : Form
         _vjoyStatus.ForeColor = _vjoyStatus.Text.StartsWith("OK") ? Color.DarkGreen : Color.DarkRed;
         _hidStatus.Text = _hidHide.IsInstalled ? "OK" : "NG - HidHideCLI.exe not found";
         _hidStatus.ForeColor = _hidHide.IsInstalled ? Color.DarkGreen : Color.DarkRed;
+    }
+
+    private async Task DetectDeviceAsync()
+    {
+        if (_devices.Count == 0)
+            return;
+
+        _detectDevice.Enabled = false;
+        _detectAxis.Enabled = false;
+        _refresh.Enabled = false;
+        _status.Text = "2秒以内にハンドブレーキを大きく引いてください…";
+
+        try
+        {
+            var baseline = new Dictionary<(int DeviceId, AxisKind Axis), uint>();
+            var maxDelta = new Dictionary<(int DeviceId, AxisKind Axis), uint>();
+
+            foreach (var d in _devices)
+            {
+                if (!_joystick.TryRead(d.Id, out var state))
+                    continue;
+
+                foreach (var axis in d.Axes)
+                {
+                    var key = (d.Id, axis);
+                    baseline[key] = state.GetAxis(axis);
+                    maxDelta[key] = 0;
+                }
+            }
+
+            var end = DateTime.UtcNow.AddSeconds(2);
+            while (DateTime.UtcNow < end)
+            {
+                foreach (var d in _devices)
+                {
+                    if (!_joystick.TryRead(d.Id, out var state))
+                        continue;
+
+                    foreach (var axis in d.Axes)
+                    {
+                        var key = (d.Id, axis);
+                        if (!baseline.TryGetValue(key, out var start))
+                            continue;
+
+                        var now = state.GetAxis(axis);
+                        var delta = now > start ? now - start : start - now;
+                        if (delta > maxDelta[key])
+                            maxDelta[key] = delta;
+                    }
+                }
+
+                await Task.Delay(15);
+            }
+
+            if (maxDelta.Count == 0)
+            {
+                _status.Text = "入力デバイスを読み取れませんでした。";
+                return;
+            }
+
+            var best = maxDelta.OrderByDescending(x => x.Value).First();
+            if (best.Value < 1500)
+            {
+                _status.Text = "十分な入力変化を検出できませんでした。";
+                return;
+            }
+
+            var deviceIndex = _devices.ToList().FindIndex(d => d.Id == best.Key.DeviceId);
+            if (deviceIndex < 0)
+                return;
+
+            _device.SelectedIndex = deviceIndex;
+
+            var device = _devices[deviceIndex];
+            var axisIndex = device.Axes.ToList().IndexOf(best.Key.Axis);
+            if (axisIndex >= 0)
+                _axis.SelectedIndex = axisIndex;
+
+            _status.Text = $"検出: {device.Name} / {best.Key.Axis} Axis";
+        }
+        finally
+        {
+            _detectDevice.Enabled = true;
+            _detectAxis.Enabled = true;
+            _refresh.Enabled = true;
+        }
     }
 
     private async Task DetectAxisAsync()
@@ -339,18 +439,30 @@ public sealed class MainForm : Form
     private async Task StartMappingAsync()
     {
         SaveUiToSettings();
+
         try
         {
+            if (_device.SelectedIndex < 0 || _device.SelectedIndex >= _devices.Count)
+                throw new InvalidOperationException("入力デバイスを選択してください。");
+
+            var selectedDevice = _devices[_device.SelectedIndex];
+
             if (_settings.HidePhysicalDevice)
             {
                 if (!_hidHide.IsInstalled)
                     throw new InvalidOperationException("HidHide is not installed.");
 
-                var currentPaths = await _hidHide.FindDevicePathsAsync(_settings.DeviceName);
-                if (currentPaths.Count == 0)
-                    throw new InvalidOperationException("HidHide could not uniquely match the selected physical device. Open HidHide Configuration Client and confirm the device name.");
+                var currentPaths = await _hidHide.FindDevicePathsAsync(
+                    selectedDevice.Name,
+                    selectedDevice.OemKey);
 
-                if (!_settings.HidHidePaths.OrderBy(x => x).SequenceEqual(currentPaths.OrderBy(x => x), StringComparer.OrdinalIgnoreCase))
+                if (currentPaths.Count == 0)
+                    throw new InvalidOperationException(
+                        "選択した物理デバイスをHidHide用に特定できませんでした。再検索または「動かしてデバイス検出」を試してください。");
+
+                if (!_settings.HidHidePaths.OrderBy(x => x).SequenceEqual(
+                        currentPaths.OrderBy(x => x),
+                        StringComparer.OrdinalIgnoreCase))
                 {
                     _status.Text = "HidHideを設定しています。UACを許可してください…";
                     var exe = Environment.ProcessPath ?? Application.ExecutablePath;
@@ -391,6 +503,7 @@ public sealed class MainForm : Form
         _device.Enabled = !running;
         _axis.Enabled = !running;
         _refresh.Enabled = !running;
+        _detectDevice.Enabled = !running;
         _detectAxis.Enabled = !running;
         _setMin.Enabled = !running;
         _setMax.Enabled = !running;
