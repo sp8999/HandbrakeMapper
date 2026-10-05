@@ -12,11 +12,11 @@ public sealed class MainForm : Form
     private readonly AppSettings _settings;
     private IReadOnlyList<JoystickService.DeviceInfo> _devices = [];
 
-    private readonly ComboBox _device = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 390 };
+    private readonly ComboBox _device = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300 };
     private readonly ComboBox _axis = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
     private readonly ComboBox _button = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90 };
-    private readonly ProgressBar _inputBar = new() { Minimum = 0, Maximum = 1000, Width = 390, Height = 22 };
-    private readonly ProgressBar _outputBar = new() { Minimum = 0, Maximum = 1000, Width = 390, Height = 22 };
+    private readonly ProgressBar _inputBar = new() { Minimum = 0, Maximum = 1000, Width = 320, Height = 22 };
+    private readonly ProgressBar _outputBar = new() { Minimum = 0, Maximum = 1000, Width = 320, Height = 22 };
     private readonly Label _inputValue = new() { AutoSize = true, Text = "0.0%" };
     private readonly Label _outputValue = new() { AutoSize = true, Text = "0.0%" };
     private readonly NumericUpDown _deadzone = new() { Minimum = 0, Maximum = 25, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
@@ -26,8 +26,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _hide = new() { Text = "元の物理デバイスをHidHideで隠す", Checked = true, AutoSize = true };
     private readonly Button _start = new() { Text = "START", Width = 170, Height = 42 };
     private readonly Button _refresh = new() { Text = "再検索", Width = 80 };
-    private readonly Button _detectDevice = new() { Text = "動かしてデバイス検出", Width = 160 };
-    private readonly Button _detectAxis = new() { Text = "軸を自動検出", Width = 120 };
+    private readonly Button _detectDevice = new() { Text = "デバイスを動かして自動設定", Width = 210 };
     private readonly Button _setMin = new() { Text = "現在値を 0%", Width = 110 };
     private readonly Button _setMax = new() { Text = "現在値を 100%", Width = 110 };
     private readonly Label _calibration = new() { AutoSize = true };
@@ -41,12 +40,14 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1.3";
+        Text = "Handbrake Mapper 0.1.4";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9F);
+
+        _vjoy.EnsureFriendlyName("HandbrakeMapper (vJoy Device)");
 
         BuildUi();
         WireEvents();
@@ -73,13 +74,13 @@ public sealed class MainForm : Form
         root.Controls.Add(Note("USBハンドブレーキの軸入力とボタン入力を選んでvJoyへ出力します。ACRを含むレースシム共通で使えます。"));
 
         root.Controls.Add(Section("入力デバイス"));
+        root.Controls.Add(Row(_detectDevice));
         root.Controls.Add(Row(new Label { Text = "Device", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _device, _refresh));
-        root.Controls.Add(Row(new Label { Text = "", Width = 70 }, _detectDevice));
-        root.Controls.Add(Row(new Label { Text = "Axis", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _axis, _detectAxis));
+        root.Controls.Add(Row(new Label { Text = "Axis", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _axis));
 
         root.Controls.Add(Section("入力モニター"));
-        root.Controls.Add(Row(_inputBar, _inputValue));
-        root.Controls.Add(Row(new Label { Text = "vJoy出力", Width = 70 }, _outputBar, _outputValue));
+        root.Controls.Add(Row(new Label { Text = "物理入力", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _inputBar, _inputValue));
+        root.Controls.Add(Row(new Label { Text = "vJoy出力", Width = 70, TextAlign = ContentAlignment.MiddleLeft }, _outputBar, _outputValue));
 
         root.Controls.Add(Section("キャリブレーション"));
         root.Controls.Add(Row(_setMin, _setMax, _calibration));
@@ -144,7 +145,6 @@ public sealed class MainForm : Form
         _detectDevice.Click += async (_, _) => await DetectDeviceAsync();
         _device.SelectedIndexChanged += (_, _) => DeviceChanged();
         _axis.SelectedIndexChanged += (_, _) => SaveUiToSettings();
-        _detectAxis.Click += async (_, _) => await DetectAxisAsync();
         _setMin.Click += (_, _) => SetCalibration(min: true);
         _setMax.Click += (_, _) => SetCalibration(min: false);
         _deadzone.ValueChanged += (_, _) => SaveUiToSettings();
@@ -261,7 +261,6 @@ public sealed class MainForm : Form
             return;
 
         _detectDevice.Enabled = false;
-        _detectAxis.Enabled = false;
         _refresh.Enabled = false;
         _status.Text = "2秒以内にハンドブレーキを大きく引いてください…";
 
@@ -336,49 +335,8 @@ public sealed class MainForm : Form
         finally
         {
             _detectDevice.Enabled = true;
-            _detectAxis.Enabled = true;
             _refresh.Enabled = true;
         }
-    }
-
-    private async Task DetectAxisAsync()
-    {
-        if (_device.SelectedIndex < 0) return;
-        var d = _devices[_device.SelectedIndex];
-        if (!_joystick.TryRead(d.Id, out var first)) return;
-
-        _detectAxis.Enabled = false;
-        _status.Text = "2秒以内にハンドブレーキを大きく引いてください…";
-        var baseline = d.Axes.ToDictionary(a => a, a => first.GetAxis(a));
-        var maxDelta = d.Axes.ToDictionary(a => a, _ => 0u);
-
-        var end = DateTime.UtcNow.AddSeconds(2);
-        while (DateTime.UtcNow < end)
-        {
-            if (_joystick.TryRead(d.Id, out var state))
-            {
-                foreach (var a in d.Axes)
-                {
-                    var now = state.GetAxis(a);
-                    var delta = now > baseline[a] ? now - baseline[a] : baseline[a] - now;
-                    if (delta > maxDelta[a]) maxDelta[a] = delta;
-                }
-            }
-            await Task.Delay(15);
-        }
-
-        var best = maxDelta.OrderByDescending(x => x.Value).FirstOrDefault();
-        if (best.Value >= 1500)
-        {
-            var index = d.Axes.ToList().IndexOf(best.Key);
-            if (index >= 0) _axis.SelectedIndex = index;
-            _status.Text = $"検出: {best.Key} axis";
-        }
-        else
-        {
-            _status.Text = "十分な軸変化を検出できませんでした。";
-        }
-        _detectAxis.Enabled = true;
     }
 
     private void SetCalibration(bool min)
@@ -520,7 +478,6 @@ public sealed class MainForm : Form
         var editable = !_mapper.IsRunning;
 
         _axis.Enabled = editable && _axisEnabled.Checked;
-        _detectAxis.Enabled = editable && _axisEnabled.Checked;
         _setMin.Enabled = editable && _axisEnabled.Checked;
         _setMax.Enabled = editable && _axisEnabled.Checked;
         _deadzone.Enabled = editable && _axisEnabled.Checked;
