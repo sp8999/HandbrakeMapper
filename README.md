@@ -27,14 +27,14 @@ Handbrake Mapperでは、**軸入力とボタン入力をそれぞれ個別にON
 
 - USBハンドブレーキを一覧から選択
 - 実際のデバイス名を表示
-- ハンドブレーキを動かして対象デバイスを自動検出
-- 使用する軸を自動検出
+- ハンドブレーキを動かすだけで対象デバイスと使用する軸を自動設定
 - 0% / 100% キャリブレーション
 - デッドゾーン設定
 - 軸反転
 - 軸入力のON / OFF
 - ボタン入力のON / OFF
 - vJoyへ仮想コントローラーとして出力
+- Windowsのゲームコントローラー一覧では `HandbrakeMapper(vJoy Device)` と表示
 - HidHideで元の物理ハンドブレーキをゲームから隠す
 - vJoy自体は入力デバイス一覧から除外
 
@@ -65,15 +65,14 @@ HandbrakeMapper.exe ----------> can still read the device
 
 ## 使い方
 
-1. `Device` から使用するハンドブレーキを選択します。
-2. どのデバイスか分からない場合は、`動かしてデバイス検出` を押してからハンドブレーキを大きく引きます。
-3. `軸を自動検出` を押してからハンドブレーキを引くか、使用するAxisを手動で選択します。
-4. レバーを完全に離した状態で `現在値を 0%` を押します。
-5. レバーを最大まで引いた状態で `現在値を 100%` を押します。
-6. 必要に応じて `Deadzone` や `軸を反転` を設定します。
-7. `軸入力` と `ボタン入力` から、ゲームへ送りたい入力方式を選びます。
-8. `元の物理デバイスをHidHideで隠す` をONにして `START` を押します。
-9. レースシム側のハンドブレーキ設定で、`vJoy Device` の入力を割り当てます。
+1. `デバイスを動かして自動設定` を押し、2秒以内にハンドブレーキを大きく引きます。使用するデバイスとAxisが自動で選択されます。
+2. 自動設定を使わない場合は、`Device` と `Axis` を手動で選択します。
+3. レバーを完全に離した状態で `現在値を 0%` を押します。
+4. レバーを最大まで引いた状態で `現在値を 100%` を押します。
+5. 必要に応じて `Deadzone` や `軸を反転` を設定します。
+6. `軸入力` と `ボタン入力` から、ゲームへ送りたい入力方式を選びます。
+7. `元の物理デバイスをHidHideで隠す` をONにして `START` を押します。
+8. レースシム側のハンドブレーキ設定で、`HandbrakeMapper(vJoy Device)` の入力を割り当てます。
 
 HidHideの設定を初めて変更するときは、WindowsのUAC確認が表示されます。
 
@@ -115,7 +114,7 @@ Inno Setup 6をインストールしてから:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-ビルドすると `HandbrakeMapper_Setup_0.1.3.exe` が生成されます。
+ビルドすると `HandbrakeMapper_Setup_0.1.4.exe` が生成されます。
 
 ## 注意
 
@@ -166,14 +165,14 @@ There is no game-specific code, so Handbrake Mapper can also be used with other 
 
 - Select a USB handbrake from a device list
 - Display actual device names
-- Automatically detect the handbrake by moving it
-- Automatically detect the active axis
+- Automatically select both the handbrake device and active axis by moving the lever
 - 0% / 100% calibration
 - Deadzone adjustment
 - Axis inversion
 - Axis input ON / OFF
 - Button input ON / OFF
 - Output through a virtual vJoy controller
+- Shown as `HandbrakeMapper(vJoy Device)` in Windows Game Controllers
 - Hide the original physical handbrake from games with HidHide
 - Exclude vJoy itself from the input-device list
 
@@ -203,15 +202,14 @@ HandbrakeMapper.exe ----------> can still read the device
 
 ## How to use
 
-1. Select your physical handbrake from `Device`.
-2. If you are not sure which device is the handbrake, click `動かしてデバイス検出` / Detect by movement and pull the handbrake firmly.
-3. Click `軸を自動検出` / Auto Detect Axis and move the handbrake, or select the axis manually.
-4. Fully release the lever and click `現在値を 0%` / Set Current Value to 0%.
-5. Pull the lever fully and click `現在値を 100%` / Set Current Value to 100%.
-6. Adjust `Deadzone` or `Invert Axis` if necessary.
-7. Choose the input mode you want to send to the game with `Axis Input` and `Button Input`.
-8. Enable `Hide physical device with HidHide` and click `START`.
-9. In your racing simulator's handbrake settings, assign the input from `vJoy Device`.
+1. Click `デバイスを動かして自動設定` / Auto Configure by Moving Device, then pull the handbrake firmly within two seconds. The device and active axis are selected automatically.
+2. If you prefer, you can select `Device` and `Axis` manually.
+3. Fully release the lever and click `現在値を 0%` / Set Current Value to 0%.
+4. Pull the lever fully and click `現在値を 100%` / Set Current Value to 100%.
+5. Adjust `Deadzone` or `Invert Axis` if necessary.
+6. Choose the input mode you want to send to the game with `Axis Input` and `Button Input`.
+7. Enable `Hide physical device with HidHide` and click `START`.
+8. In your racing simulator's handbrake settings, assign the input from `HandbrakeMapper(vJoy Device)`.
 
 Windows may display a UAC prompt the first time HidHide settings are changed.
 
@@ -253,7 +251,7 @@ Install Inno Setup 6 first, then run:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-This generates `HandbrakeMapper_Setup_0.1.3.exe`.
+This generates `HandbrakeMapper_Setup_0.1.4.exe`.
 
 ## Notes
 
