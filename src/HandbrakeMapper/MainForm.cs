@@ -47,7 +47,7 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9F);
 
-        _vjoy.EnsureFriendlyName("HandbrakeMapper (vJoy Device)");
+        _vjoy.EnsureFriendlyName("HandbrakeMapper(vJoy Device)");
 
         BuildUi();
         WireEvents();
