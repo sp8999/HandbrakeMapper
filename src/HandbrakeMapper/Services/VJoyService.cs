@@ -26,6 +26,35 @@ public sealed class VJoyService : IDisposable
     public string LoadedFrom { get; private set; } = string.Empty;
     public bool IsAcquired => _acquired;
 
+
+    public void EnsureFriendlyName(string friendlyName)
+    {
+        // Windows' legacy Game Controllers panel reads the joystick OEMName.
+        // vJoy uses VID 1234 with one of these product IDs depending on the
+        // installed/configured driver mode. This changes only the display
+        // label for the current user; it does not modify the signed driver.
+        var oemKeys = new[]
+        {
+            @"System\CurrentControlSet\Control\MediaProperties\PrivateProperties\Joystick\OEM\VID_1234&PID_0FFB",
+            @"System\CurrentControlSet\Control\MediaProperties\PrivateProperties\Joystick\OEM\VID_1234&PID_1FFB",
+            @"System\CurrentControlSet\Control\MediaProperties\PrivateProperties\Joystick\OEM\VID_1234&PID_BEAD"
+        };
+
+        foreach (var path in oemKeys)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(path, writable: true);
+                key?.SetValue("OEMName", friendlyName, RegistryValueKind.String);
+            }
+            catch
+            {
+                // Display-name customization is cosmetic. Never prevent the app
+                // from running if Windows refuses the registry write.
+            }
+        }
+    }
+
     public bool Probe(out string message)
     {
         try
