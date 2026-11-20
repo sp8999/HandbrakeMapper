@@ -15,6 +15,8 @@ public sealed class AppSettings
     public bool HidePhysicalDevice { get; set; } = true;
     public int VJoyDeviceId { get; set; } = 1;
     public List<string> HidHidePaths { get; set; } = [];
+    // Write-ahead recovery journal: paths that may have been hidden before an error/crash.
+    public List<string> HidHidePendingPaths { get; set; } = [];
 }
 
 public enum AxisKind
