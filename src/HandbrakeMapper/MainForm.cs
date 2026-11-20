@@ -42,7 +42,7 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1.4";
+        Text = "Handbrake Mapper 0.1.5";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
@@ -421,7 +421,7 @@ public sealed class MainForm : Form
         }
 
         if (MessageBox.Show(this,
-            $"HandbrakeMapperが記録した {paths.Count} 件のHIDデバイスを非表示解除します。\\n続行しますか？",
+            $"HandbrakeMapperが記録した {paths.Count} 件のHIDデバイスを非表示解除します。\n続行しますか？",
             "HidHide緊急解除", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
         _busy = true;
@@ -473,7 +473,7 @@ public sealed class MainForm : Form
             ? "HidHideによりゲームや他のアプリからこの物理デバイスが見えなくなります。"
             : "HidHideによる新規の非表示は行いません。";
         if (MessageBox.Show(this,
-            $"対象: {selectedDevice.Name} [Joy {selectedDevice.Id + 1}]\\n\\n{warning}\\n\\nこのデバイスでSTARTしますか？",
+            $"対象: {selectedDevice.Name} [Joy {selectedDevice.Id + 1}]\n\n{warning}\n\nこのデバイスでSTARTしますか？",
             "START確認", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
         _busy = true;
