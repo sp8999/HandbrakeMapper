@@ -114,9 +114,9 @@ Inno Setup 6をインストールしてから:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-ビルドすると `HandbrakeMapper_Setup_0.1.7.exe` が生成されます。
+ビルドすると `HandbrakeMapper_Setup_0.1.8.exe` が生成されます。
 
-## HidHideの緊急解除（v0.1.7）
+## HidHideの緊急解除（v0.1.8）
 
 誤ってハンドルコントローラーなどを非表示にした場合、Handbrake Mapperの「HidHideの非表示を緊急解除」を押してください。デバイスが入力一覧から消えていても操作できます。確認後、管理者権限の確認（UAC）に応じると、このアプリが記録した非表示パスを解除します。必要ならUSBを再接続して「再検索」を押します。
 
@@ -132,6 +132,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 - START前と個別解除・緊急解除の処理前にCLIで接続確認を行い、アクセス拒否ならUACの前に停止して具体的な操作を案内します。
 - 非表示処理で失敗した場合は、同一の管理者PowerShell内で今回追加した非表示登録の解除を試み、2回目のUAC表示を抑止します。失敗時の復旧記録は保持します。
 - HidHideを操作するほかの常駐ソフトがある場合もアクセス拒否の原因になり得ます。不要な管理画面を閉じて再実行してください。
+
+### START時の不要なUACを防止（v0.1.8）
+
+START時にHidHideから実際の非表示デバイス、アプリ許可リスト、非表示ON/OFF状態を読み取ります（通常はUAC不要）。対象デバイスがすべて非表示済み、HandbrakeMapper本体が許可リストに登録済み、かつ非表示機能が有効な場合にはPowerShellの設定変更処理を実行しません。初回や設定変更・不足がある場合のみUACを要求します。古いデバイスの登録解除が必要な場合もUACが必要です。読み取りに失敗した場合は安全のためSTARTを中止します。
 
 ## 注意
 
