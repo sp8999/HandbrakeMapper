@@ -25,6 +25,8 @@ public sealed class MainForm : Form
     private readonly CheckBox _buttonEnabled = new() { Text = "ボタン入力" };
     private readonly CheckBox _hide = new() { Text = "元の物理デバイスをHidHideで隠す", Checked = true, AutoSize = true };
     private readonly Button _start = new() { Text = "START", Width = 170, Height = 42 };
+    private readonly Button _recover = new() { Text = "HidHideの非表示を緊急解除", Width = 230 };
+    private bool _busy;
     private readonly Button _refresh = new() { Text = "再検索", Width = 80 };
     private readonly Button _detectDevice = new() { Text = "デバイスを動かして自動設定", Width = 210 };
     private readonly Button _setMin = new() { Text = "現在値を 0%", Width = 110 };
@@ -92,6 +94,8 @@ public sealed class MainForm : Form
 
         root.Controls.Add(Section("デバイス非表示"));
         root.Controls.Add(_hide);
+        root.Controls.Add(Row(_recover));
+        root.Controls.Add(Note("過去にHandbrakeMapperが非表示にしたデバイスを解除します。START不要。HidHideの他アプリの設定は変更しません。"));
         root.Controls.Add(Note("ONの場合、初回だけUACが表示されます。HidHide設定変更後に自動でデバイス再起動を試みます。ゲームから元デバイスが見える場合はUSBを一度抜き差ししてください。"));
 
         root.Controls.Add(Section("ドライバ"));
@@ -154,6 +158,7 @@ public sealed class MainForm : Form
         _button.SelectedIndexChanged += (_, _) => SaveUiToSettings();
         _hide.CheckedChanged += (_, _) => SaveUiToSettings();
         _start.Click += async (_, _) => await ToggleStartAsync();
+        _recover.Click += async (_, _) => await RecoverHiddenAsync();
         _uiTimer.Tick += (_, _) => UpdateMonitor();
         FormClosing += async (_, _) =>
         {
@@ -400,57 +405,144 @@ public sealed class MainForm : Form
             await StartMappingAsync();
     }
 
-    private async Task StartMappingAsync()
-    {
-        SaveUiToSettings();
+    private static List<string> RecoveryPaths(AppSettings settings) =>
+        settings.HidHidePaths.Concat(settings.HidHidePendingPaths)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
+    private async Task RecoverHiddenAsync()
+    {
+        if (_busy) return;
+        var paths = RecoveryPaths(_settings);
+        if (paths.Count == 0)
+        {
+            _status.Text = "このアプリの解除対象の記録はありません。HidHide Configuration Clientも確認してください。";
+            return;
+        }
+
+        if (MessageBox.Show(this,
+            $"HandbrakeMapperが記録した {paths.Count} 件のHIDデバイスを非表示解除します。\\n続行しますか？",
+            "HidHide緊急解除", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+        _busy = true;
+        _recover.Enabled = false;
+        _start.Enabled = false;
         try
         {
-            if (_device.SelectedIndex < 0 || _device.SelectedIndex >= _devices.Count)
-                throw new InvalidOperationException("入力デバイスを選択してください。");
+            if (_mapper.IsRunning) await StopMappingAsync();
+            await UnhideRecordedAsync(paths);
+            _status.Text = "非表示設定を解除しました。必要ならUSBを抜き差しし、再検索してください。";
+            RefreshDevices();
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "解除失敗。解除対象の記録は保持されています: " + ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+            _recover.Enabled = true;
+            _start.Enabled = true;
+        }
+    }
 
-            var selectedDevice = _devices[_device.SelectedIndex];
+    private async Task UnhideRecordedAsync(IReadOnlyCollection<string> paths)
+    {
+        if (paths.Count == 0) return;
+        // Preserve the journal on failure. Never clear the recovery list before an unhide succeeds.
+        await _hidHide.RemoveHiddenAsync(paths);
+        _settings.HidHidePaths = _settings.HidHidePaths
+            .Except(paths, StringComparer.OrdinalIgnoreCase).ToList();
+        _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
+            .Except(paths, StringComparer.OrdinalIgnoreCase).ToList();
+        SettingsStore.Save(_settings);
+    }
 
+    private async Task StartMappingAsync()
+    {
+        if (_busy) return;
+        SaveUiToSettings();
+        if (_device.SelectedIndex < 0 || _device.SelectedIndex >= _devices.Count)
+        {
+            _status.Text = "入力デバイスを選択してください。";
+            return;
+        }
+
+        var selectedDevice = _devices[_device.SelectedIndex];
+        var warning = _settings.HidePhysicalDevice
+            ? "HidHideによりゲームや他のアプリからこの物理デバイスが見えなくなります。"
+            : "HidHideによる新規の非表示は行いません。";
+        if (MessageBox.Show(this,
+            $"対象: {selectedDevice.Name} [Joy {selectedDevice.Id + 1}]\\n\\n{warning}\\n\\nこのデバイスでSTARTしますか？",
+            "START確認", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+        _busy = true;
+        _start.Enabled = false;
+        _recover.Enabled = false;
+        var hiddenThisAttempt = new List<string>();
+        try
+        {
             if (_settings.HidePhysicalDevice)
             {
                 if (!_hidHide.IsInstalled)
                     throw new InvalidOperationException("HidHide is not installed.");
 
-                var currentPaths = await _hidHide.FindDevicePathsAsync(
-                    selectedDevice.Name,
-                    selectedDevice.OemKey);
-
+                var currentPaths = await _hidHide.FindDevicePathsAsync(selectedDevice.Name, selectedDevice.OemKey);
                 if (currentPaths.Count == 0)
-                    throw new InvalidOperationException(
-                        "選択した物理デバイスをHidHide用に特定できませんでした。再検索または「動かしてデバイス検出」を試してください。");
+                    throw new InvalidOperationException("選択した物理デバイスのHIDパスを特定できませんでした。");
 
-                if (!_settings.HidHidePaths.OrderBy(x => x).SequenceEqual(
-                        currentPaths.OrderBy(x => x),
-                        StringComparer.OrdinalIgnoreCase))
-                {
-                    _status.Text = "HidHideを設定しています。UACを許可してください…";
-                    var exe = Environment.ProcessPath ?? Application.ExecutablePath;
-                    await _hidHide.ApplyHiddenAsync(exe, currentPaths);
-                    _settings.HidHidePaths = currentPaths;
-                    SettingsStore.Save(_settings);
-                }
-            }
-            else if (_settings.HidHidePaths.Count > 0)
-            {
-                _status.Text = "HidHideの非表示設定を解除しています。UACを許可してください…";
-                await _hidHide.RemoveHiddenAsync(_settings.HidHidePaths);
-                _settings.HidHidePaths.Clear();
+                var previous = RecoveryPaths(_settings);
+                var stalePaths = previous.Except(currentPaths, StringComparer.OrdinalIgnoreCase).ToList();
+                if (stalePaths.Count > 0)
+                    await UnhideRecordedAsync(stalePaths);
+
+                // Journal BEFORE applying any hide, so crashes and partial CLI failures are recoverable.
+                _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
+                    .Concat(currentPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 SettingsStore.Save(_settings);
+                hiddenThisAttempt = currentPaths.ToList();
+
+                _status.Text = "HidHideを設定しています。UACを許可してください…";
+                var exe = Environment.ProcessPath ?? Application.ExecutablePath;
+                await _hidHide.ApplyHiddenAsync(exe, currentPaths);
+
+                _settings.HidHidePaths = currentPaths.ToList();
+                _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
+                    .Except(currentPaths, StringComparer.OrdinalIgnoreCase).ToList();
+                SettingsStore.Save(_settings);
+            }
+            else
+            {
+                await UnhideRecordedAsync(RecoveryPaths(_settings));
             }
 
             _mapper.Start(_settings);
             SetRunningUi(true);
-            _status.Text = "Mapping active. ゲーム側では vJoy Device の入力をHandbrakeに割り当ててください。";
+            _status.Text = "Mapping active. ゲーム側ではvJoy DeviceをHandbrakeに割り当ててください。";
         }
         catch (Exception ex)
         {
-            _status.Text = "ERROR: " + ex.Message;
+            var error = ex.Message;
+            if (hiddenThisAttempt.Count > 0)
+            {
+                try
+                {
+                    await UnhideRecordedAsync(hiddenThisAttempt);
+                }
+                catch (Exception recoveryError)
+                {
+                    error += " / 自動復旧失敗: " + recoveryError.Message +
+                        "。緊急解除ボタンを使ってください。";
+                }
+            }
+            _status.Text = "ERROR: " + error;
             RefreshDriverStatus();
+        }
+        finally
+        {
+            _busy = false;
+            _start.Enabled = true;
+            _recover.Enabled = true;
         }
     }
 
