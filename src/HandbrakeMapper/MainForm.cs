@@ -43,7 +43,7 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1.6";
+        Text = "Handbrake Mapper 0.1.7";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
@@ -96,6 +96,7 @@ public sealed class MainForm : Form
         root.Controls.Add(Section("デバイス非表示"));
         root.Controls.Add(_hide);
         root.Controls.Add(Row(_recover, _inspectHidden));
+        root.Controls.Add(Note("HidHide Configuration Clientを閉じてから実行してください。同時起動中はアクセス拒否(0x0005)になります。"));
         root.Controls.Add(Note("過去にHandbrakeMapperが非表示にしたデバイスを解除します。START不要。HidHideの他アプリの設定は変更しません。"));
         root.Controls.Add(Note("ONの場合、初回だけUACが表示されます。HidHide設定変更後に自動でデバイス再起動を試みます。ゲームから元デバイスが見える場合はUSBを一度抜き差ししてください。"));
 
@@ -548,6 +549,7 @@ public sealed class MainForm : Form
     {
         if (paths.Count == 0) return;
         // Preserve the journal on failure. Never clear the recovery list before an unhide succeeds.
+        await _hidHide.CheckAvailableAsync();
         await _hidHide.RemoveHiddenAsync(paths);
         _settings.HidHidePaths = _settings.HidHidePaths
             .Except(paths, StringComparer.OrdinalIgnoreCase).ToList();
@@ -581,6 +583,10 @@ public sealed class MainForm : Form
         var hiddenThisAttempt = new List<string>();
         try
         {
+            // Fail fast before UAC, journaling or device changes if the GUI holds HidHide.
+            var existingHidden = (_settings.HidePhysicalDevice || RecoveryPaths(_settings).Count > 0)
+                ? (await _hidHide.GetHiddenDevicesAsync()).Select(x => x.InstancePath).ToList()
+                : new List<string>();
             if (_settings.HidePhysicalDevice)
             {
                 if (!_hidHide.IsInstalled)
@@ -599,11 +605,11 @@ public sealed class MainForm : Form
                 _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
                     .Concat(currentPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 SettingsStore.Save(_settings);
-                hiddenThisAttempt = currentPaths.ToList();
-
+                // The elevated helper rolls back partial HID changes within its own UAC session.
                 _status.Text = "HidHideを設定しています。UACを許可してください…";
                 var exe = Environment.ProcessPath ?? Application.ExecutablePath;
-                await _hidHide.ApplyHiddenAsync(exe, currentPaths);
+                await _hidHide.ApplyHiddenAsync(exe, currentPaths, existingHidden);
+                hiddenThisAttempt = currentPaths.Except(existingHidden, StringComparer.OrdinalIgnoreCase).ToList();
 
                 _settings.HidHidePaths = currentPaths.ToList();
                 _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
