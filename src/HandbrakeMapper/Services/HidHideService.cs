@@ -32,6 +32,36 @@ public sealed class HidHideService
 
     public sealed record HiddenDevice(string InstancePath, string DisplayName);
 
+    public sealed record ConfigurationSnapshot(
+        HashSet<string> HiddenPaths, HashSet<string> AllowedApplications,
+        bool CloakEnabled, bool InverseMode);
+
+    // Read all relevant live settings in ONE CLI session (no UAC).
+    // Never assume our local journal matches the driver's current state.
+    public async Task<ConfigurationSnapshot> GetConfigurationAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var output = await ReadCliAsync(
+            "--dev-list --app-list --cloak-state --inv-state", cancellationToken);
+        var hidden = Regex.Matches(output,
+            @"(?im)^\s*--dev-hide\s+""(?<value>[^""]+)""\s*$")
+            .Select(m => m.Groups["value"].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allowed = Regex.Matches(output,
+            @"(?im)^\s*--app-reg\s+""(?<value>[^""]+)""\s*$")
+            .Select(m => m.Groups["value"].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var cloakOn = Regex.IsMatch(output, @"(?im)^\s*--cloak-on\s*$");
+        var cloakOff = Regex.IsMatch(output, @"(?im)^\s*--cloak-off\s*$");
+        var inverseOn = Regex.IsMatch(output, @"(?im)^\s*--inv-on\s*$");
+        var inverseOff = Regex.IsMatch(output, @"(?im)^\s*--inv-off\s*$");
+        if (cloakOn == cloakOff || inverseOn == inverseOff)
+            throw new InvalidOperationException(
+                "HidHideの現在状態を読み取れません。安全のためSTARTを中止しました。");
+        return new ConfigurationSnapshot(hidden, allowed, cloakOn, inverseOn);
+    }
+
+
     // HidHide's control device only allows one configuration client at a time.
     // Probe BEFORE showing UAC or modifying the recovery journal.
     public async Task CheckAvailableAsync(CancellationToken cancellationToken = default)
