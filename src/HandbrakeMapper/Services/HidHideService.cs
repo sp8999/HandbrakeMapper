@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace HandbrakeMapper.Services;
 
@@ -27,6 +28,87 @@ public sealed class HidHideService
             Path.Combine(pf, "Nefarius Software Solutions e.U", "HidHideCLI", "HidHideCLI.exe")
         };
         CliPath = candidates.FirstOrDefault(File.Exists);
+    }
+
+    public sealed record HiddenDevice(string InstancePath, string DisplayName);
+
+    public async Task<List<HiddenDevice>> GetHiddenDevicesAsync(CancellationToken cancellationToken = default)
+    {
+        if (CliPath is null)
+            throw new InvalidOperationException("HidHide CLI is not installed.");
+
+        var list = await ReadCliAsync("--dev-list", cancellationToken);
+        var paths = Regex.Matches(list, @"(?m)^\s*--dev-hide\s+""(?<path>[^""]+)""\s*$")
+            .Select(m => m.Groups["path"].Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (paths.Count == 0) return [];
+
+        var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var json = await ReadCliAsync("--dev-all", cancellationToken);
+            using var doc = JsonDocument.Parse(json);
+            foreach (var container in doc.RootElement.EnumerateArray())
+            {
+                var friendlyName = container.TryGetProperty("friendlyName", out var fn)
+                    ? fn.GetString() ?? "" : "";
+                if (!container.TryGetProperty("devices", out var devices)) continue;
+                foreach (var device in devices.EnumerateArray())
+                {
+                    if (!device.TryGetProperty("deviceInstancePath", out var id)) continue;
+                    var path = id.GetString();
+                    if (string.IsNullOrWhiteSpace(path)) continue;
+                    var description = device.TryGetProperty("description", out var desc)
+                        ? desc.GetString() ?? "" : "";
+                    var product = device.TryGetProperty("product", out var prod)
+                        ? prod.GetString() ?? "" : "";
+                    var label = new[] { friendlyName, product, description }
+                        .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "";
+                    if (label.Length > 0) names[path] = label;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // The raw registered instance IDs remain authoritative even if inventory is unavailable.
+        }
+
+        foreach (var d in EnumeratePresentHidDevices())
+        {
+            if (names.ContainsKey(d.InstanceId)) continue;
+            var label = !string.IsNullOrWhiteSpace(d.FriendlyName) ? d.FriendlyName : d.Description;
+            if (!string.IsNullOrWhiteSpace(label)) names[d.InstanceId] = label;
+        }
+
+        return paths.Select(p => new HiddenDevice(p,
+            names.TryGetValue(p, out var name) ? name : "(デバイス名取得不可)")).ToList();
+    }
+
+    private async Task<string> ReadCliAsync(string args, CancellationToken cancellationToken)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = CliPath!,
+                Arguments = args,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }
+        };
+        if (!process.Start()) throw new InvalidOperationException("HidHide CLI could not start.");
+        var output = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var error = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var stdout = await output;
+        var stderr = await error;
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException("HidHide CLI read failed: " + stderr);
+        return stdout.TrimStart('\uFEFF');
     }
 
     public Task<List<string>> FindDevicePathsAsync(
