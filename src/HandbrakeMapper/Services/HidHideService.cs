@@ -106,7 +106,8 @@ public sealed class HidHideService
 
     public async Task RemoveHiddenAsync(IReadOnlyCollection<string> paths, CancellationToken cancellationToken = default)
     {
-        if (CliPath is null || paths.Count == 0) return;
+        if (paths.Count == 0) return;
+        if (CliPath is null) throw new InvalidOperationException("HidHide CLI is not installed; recovery list preserved.");
 
         var script = new StringBuilder();
         script.AppendLine("$ErrorActionPreference = 'Stop'");
