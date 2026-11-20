@@ -32,6 +32,14 @@ public sealed class HidHideService
 
     public sealed record HiddenDevice(string InstancePath, string DisplayName);
 
+    // HidHide's control device only allows one configuration client at a time.
+    // Probe BEFORE showing UAC or modifying the recovery journal.
+    public async Task CheckAvailableAsync(CancellationToken cancellationToken = default)
+    {
+        await ReadCliAsync("--dev-list", cancellationToken);
+    }
+
+
     public async Task<List<HiddenDevice>> GetHiddenDevicesAsync(CancellationToken cancellationToken = default)
     {
         if (CliPath is null)
@@ -107,7 +115,12 @@ public sealed class HidHideService
         var stdout = await output;
         var stderr = await error;
         if (process.ExitCode != 0)
+        {
+            if (process.ExitCode == 5 || stderr.Contains("0x0005", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "HidHideにアクセスできません (0x0005)。HidHide Configuration Clientや他のHidHide管理ツールを完全に終了してください。管理者実行だけでは解決しません。");
             throw new InvalidOperationException("HidHide CLI read failed: " + stderr);
+        }
         return stdout.TrimStart('\uFEFF');
     }
 
@@ -160,25 +173,38 @@ public sealed class HidHideService
         return Task.FromResult(new List<string> { best[0].Device.InstanceId });
     }
 
-    public async Task ApplyHiddenAsync(string appPath, IReadOnlyCollection<string> paths, CancellationToken cancellationToken = default)
+    public async Task ApplyHiddenAsync(string appPath, IReadOnlyCollection<string> paths,
+        IReadOnlyCollection<string>? alreadyHidden = null, CancellationToken cancellationToken = default)
     {
         if (CliPath is null)
             throw new InvalidOperationException("HidHide is not installed.");
         if (paths.Count == 0)
             throw new InvalidOperationException("No matching HidHide device paths were found.");
 
+        // Rollback occurs inside the SAME elevated PowerShell process on failure.
+        // Do not remove entries that were already hidden before this attempt.
+        var fresh = paths.Except(alreadyHidden ?? Array.Empty<string>(),
+            StringComparer.OrdinalIgnoreCase).ToList();
         var script = new StringBuilder();
         script.AppendLine("$ErrorActionPreference = 'Stop'");
         script.AppendLine($"$cli = '{Ps(CliPath)}'");
-        script.AppendLine($"& $cli --app-reg '{Ps(appPath)}'");
-        script.AppendLine("if ($LASTEXITCODE -ne 0) { throw 'HidHide app registration failed' }");
+        script.AppendLine("$added = New-Object 'System.Collections.Generic.List[string]'");
+        script.AppendLine("try {");
+        script.AppendLine($"  & $cli --app-reg '{Ps(appPath)}'");
+        script.AppendLine("  if ($LASTEXITCODE -ne 0) { throw 'HidHide app registration failed' }");
         foreach (var path in paths)
         {
-            script.AppendLine($"& $cli --dev-hide '{Ps(path)}'");
-            script.AppendLine("if ($LASTEXITCODE -ne 0) { throw 'HidHide device hide failed' }");
+            script.AppendLine($"  & $cli --dev-hide '{Ps(path)}'");
+            script.AppendLine("  if ($LASTEXITCODE -ne 0) { throw 'HidHide device hide failed' }");
+            if (fresh.Contains(path, StringComparer.OrdinalIgnoreCase))
+                script.AppendLine($"  $added.Add('{Ps(path)}')");
         }
-        script.AppendLine("& $cli --cloak-on");
-        script.AppendLine("if ($LASTEXITCODE -ne 0) { throw 'HidHide cloak enable failed' }");
+        script.AppendLine("  & $cli --cloak-on");
+        script.AppendLine("  if ($LASTEXITCODE -ne 0) { throw 'HidHide cloak enable failed' }");
+        script.AppendLine("} catch {");
+        script.AppendLine("  foreach ($device in $added) { & $cli --dev-unhide $device | Out-Null }");
+        script.AppendLine("  exit 1");
+        script.AppendLine("}");
         script.AppendLine("$pnputil = Join-Path $env:SystemRoot 'System32\\pnputil.exe'");
         foreach (var path in paths)
             script.AppendLine($"try {{ & $pnputil /restart-device '{Ps(path)}' | Out-Null }} catch {{ }}");
