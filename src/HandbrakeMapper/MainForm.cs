@@ -43,7 +43,7 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1.7";
+        Text = "Handbrake Mapper 0.1.8";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
@@ -548,9 +548,13 @@ public sealed class MainForm : Form
     private async Task UnhideRecordedAsync(IReadOnlyCollection<string> paths)
     {
         if (paths.Count == 0) return;
-        // Preserve the journal on failure. Never clear the recovery list before an unhide succeeds.
-        await _hidHide.CheckAvailableAsync();
-        await _hidHide.RemoveHiddenAsync(paths);
+        // Unhide only paths that really are hidden. A stale recovery journal does
+        // not justify a UAC prompt or changing other users' HidHide settings.
+        var live = await _hidHide.GetConfigurationAsync();
+        var registered = paths.Where(live.HiddenPaths.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (registered.Count > 0)
+            await _hidHide.RemoveHiddenAsync(registered);
+
         _settings.HidHidePaths = _settings.HidHidePaths
             .Except(paths, StringComparer.OrdinalIgnoreCase).ToList();
         _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
@@ -583,33 +587,45 @@ public sealed class MainForm : Form
         var hiddenThisAttempt = new List<string>();
         try
         {
-            // Fail fast before UAC, journaling or device changes if the GUI holds HidHide.
-            var existingHidden = (_settings.HidePhysicalDevice || RecoveryPaths(_settings).Count > 0)
-                ? (await _hidHide.GetHiddenDevicesAsync()).Select(x => x.InstancePath).ToList()
-                : new List<string>();
+            var managedPaths = RecoveryPaths(_settings);
+            HidHideService.ConfigurationSnapshot? live = null;
+            if (_settings.HidePhysicalDevice || managedPaths.Count > 0)
+                live = await _hidHide.GetConfigurationAsync(); // Read-only. No UAC.
+
             if (_settings.HidePhysicalDevice)
             {
                 if (!_hidHide.IsInstalled)
                     throw new InvalidOperationException("HidHide is not installed.");
+                if (live!.InverseMode)
+                    throw new InvalidOperationException(
+                        "HidHideのアプリ許可リストが逆転モードです。安全のためSTARTを中止しました。");
 
-                var currentPaths = await _hidHide.FindDevicePathsAsync(selectedDevice.Name, selectedDevice.OemKey);
+                var currentPaths = await _hidHide.FindDevicePathsAsync(
+                    selectedDevice.Name, selectedDevice.OemKey);
                 if (currentPaths.Count == 0)
                     throw new InvalidOperationException("選択した物理デバイスのHIDパスを特定できませんでした。");
 
-                var previous = RecoveryPaths(_settings);
-                var stalePaths = previous.Except(currentPaths, StringComparer.OrdinalIgnoreCase).ToList();
-                if (stalePaths.Count > 0)
-                    await UnhideRecordedAsync(stalePaths);
+                var stale = managedPaths.Except(currentPaths,
+                    StringComparer.OrdinalIgnoreCase).ToList();
+                if (stale.Count > 0)
+                    await UnhideRecordedAsync(stale);
 
-                // Journal BEFORE applying any hide, so crashes and partial CLI failures are recoverable.
-                _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
-                    .Concat(currentPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                SettingsStore.Save(_settings);
-                // The elevated helper rolls back partial HID changes within its own UAC session.
-                _status.Text = "HidHideを設定しています。UACを許可してください…";
                 var exe = Environment.ProcessPath ?? Application.ExecutablePath;
-                await _hidHide.ApplyHiddenAsync(exe, currentPaths, existingHidden);
-                hiddenThisAttempt = currentPaths.Except(existingHidden, StringComparer.OrdinalIgnoreCase).ToList();
+                var isAllowed = live.AllowedApplications.Contains(exe);
+                var allHidden = currentPaths.All(live.HiddenPaths.Contains);
+                // Existing HidHide state is authoritative. Do not launch elevated
+                // PowerShell just to re-apply an already-correct configuration.
+                if (!allHidden || !isAllowed || !live.CloakEnabled)
+                {
+                    _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
+                        .Concat(currentPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    SettingsStore.Save(_settings); // Write-ahead recovery journal.
+
+                    _status.Text = "HidHideの変更が必要です。UACを許可してください…";
+                    await _hidHide.ApplyHiddenAsync(exe, currentPaths, live.HiddenPaths);
+                    hiddenThisAttempt = currentPaths.Except(
+                        live.HiddenPaths, StringComparer.OrdinalIgnoreCase).ToList();
+                }
 
                 _settings.HidHidePaths = currentPaths.ToList();
                 _settings.HidHidePendingPaths = _settings.HidHidePendingPaths
@@ -618,7 +634,7 @@ public sealed class MainForm : Form
             }
             else
             {
-                await UnhideRecordedAsync(RecoveryPaths(_settings));
+                await UnhideRecordedAsync(managedPaths);
             }
 
             _mapper.Start(_settings);
