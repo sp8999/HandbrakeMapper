@@ -114,13 +114,13 @@ Inno Setup 6をインストールしてから:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-ビルドすると `HandbrakeMapper_Setup_0.1.5.exe` が生成されます。
+ビルドすると `HandbrakeMapper_Setup_0.1.6.exe` が生成されます。
 
-## HidHideの緊急解除（v0.1.5）
+## HidHideの緊急解除（v0.1.6）
 
 誤ってハンドルコントローラーなどを非表示にした場合、Handbrake Mapperの「HidHideの非表示を緊急解除」を押してください。デバイスが入力一覧から消えていても操作できます。確認後、管理者権限の確認（UAC）に応じると、このアプリが記録した非表示パスを解除します。必要ならUSBを再接続して「再検索」を押します。
 
-- START時は対象デバイス名を確認してから実行します。
+- v0.1.6では「HidHide登録一覧から個別解除」を追加しました。HidHideの実際の非表示登録（`--dev-list`）から対象を選び、他のデバイスを変更せずに解除します。既存のsettings.jsonに記録がない場合にも対応できます。表示名が不明な場合はインスタンスパスを確認してから解除してください。\n- この操作はHidHide全体の有効・無効を変更しません。`Enable device hiding` がOFFのままであれば、必要なデバイスの登録解除後に自分でONに戻してください。\n- START時は対象デバイス名を確認してから実行します。
 - START失敗時は今回設定した非表示対象の自動解除を試みます。解除に失敗した場合も復旧記録は保持します。
 - 記録は `%LOCALAPPDATA%\\HandbrakeMapper\\settings.json` の `HidHidePaths` と `HidHidePendingPaths` に保存されます。誤って削除しないでください。
 - v0.1.4以前で設定済みの `HidHidePaths` も解除対象になります。ただし、設定ファイルを削除していた場合などアプリに記録がない非表示対象はHidHide Configuration Clientで解除してください。
@@ -261,7 +261,7 @@ Install Inno Setup 6 first, then run:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 ```
 
-This generates `HandbrakeMapper_Setup_0.1.5.exe`.
+This generates `HandbrakeMapper_Setup_0.1.6.exe`.
 
 ## Notes
 
