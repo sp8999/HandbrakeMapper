@@ -1,5 +1,5 @@
 #define MyAppName "Handbrake Mapper"
-#define MyAppVersion "0.1.6"
+#define MyAppVersion "0.1.7"
 #define MyAppExeName "HandbrakeMapper.exe"
 #define Root ".."
 
