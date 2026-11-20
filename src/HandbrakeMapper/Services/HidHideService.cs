@@ -89,9 +89,14 @@ public sealed class HidHideService
         script.AppendLine("$ErrorActionPreference = 'Stop'");
         script.AppendLine($"$cli = '{Ps(CliPath)}'");
         script.AppendLine($"& $cli --app-reg '{Ps(appPath)}'");
+        script.AppendLine("if ($LASTEXITCODE -ne 0) { throw 'HidHide app registration failed' }");
         foreach (var path in paths)
+        {
             script.AppendLine($"& $cli --dev-hide '{Ps(path)}'");
+            script.AppendLine("if ($LASTEXITCODE -ne 0) { throw 'HidHide device hide failed' }");
+        }
         script.AppendLine("& $cli --cloak-on");
+        script.AppendLine("if ($LASTEXITCODE -ne 0) { throw 'HidHide cloak enable failed' }");
         script.AppendLine("$pnputil = Join-Path $env:SystemRoot 'System32\\pnputil.exe'");
         foreach (var path in paths)
             script.AppendLine($"try {{ & $pnputil /restart-device '{Ps(path)}' | Out-Null }} catch {{ }}");
@@ -104,10 +109,13 @@ public sealed class HidHideService
         if (CliPath is null || paths.Count == 0) return;
 
         var script = new StringBuilder();
-        script.AppendLine("$ErrorActionPreference = 'Continue'");
+        script.AppendLine("$ErrorActionPreference = 'Stop'");
         script.AppendLine($"$cli = '{Ps(CliPath)}'");
         foreach (var path in paths)
+        {
             script.AppendLine($"& $cli --dev-unhide '{Ps(path)}'");
+            script.AppendLine("if ($LASTEXITCODE -ne 0) { throw 'HidHide device unhide failed' }");
+        }
         script.AppendLine("$pnputil = Join-Path $env:SystemRoot 'System32\\pnputil.exe'");
         foreach (var path in paths)
             script.AppendLine($"try {{ & $pnputil /restart-device '{Ps(path)}' | Out-Null }} catch {{ }}");
