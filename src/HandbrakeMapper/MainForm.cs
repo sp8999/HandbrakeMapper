@@ -26,6 +26,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _hide = new() { Text = "元の物理デバイスをHidHideで隠す", Checked = true, AutoSize = true };
     private readonly Button _start = new() { Text = "START", Width = 170, Height = 42 };
     private readonly Button _recover = new() { Text = "HidHideの非表示を緊急解除", Width = 230 };
+    private readonly Button _inspectHidden = new() { Text = "HidHide登録一覧から個別解除", Width = 230 };
     private bool _busy;
     private readonly Button _refresh = new() { Text = "再検索", Width = 80 };
     private readonly Button _detectDevice = new() { Text = "デバイスを動かして自動設定", Width = 210 };
@@ -42,7 +43,7 @@ public sealed class MainForm : Form
         _settings = SettingsStore.Load();
         _mapper = new MapperService(_joystick, _vjoy);
 
-        Text = "Handbrake Mapper 0.1.5";
+        Text = "Handbrake Mapper 0.1.6";
         Width = 590;
         Height = 750;
         MinimumSize = new Size(590, 700);
@@ -94,7 +95,7 @@ public sealed class MainForm : Form
 
         root.Controls.Add(Section("デバイス非表示"));
         root.Controls.Add(_hide);
-        root.Controls.Add(Row(_recover));
+        root.Controls.Add(Row(_recover, _inspectHidden));
         root.Controls.Add(Note("過去にHandbrakeMapperが非表示にしたデバイスを解除します。START不要。HidHideの他アプリの設定は変更しません。"));
         root.Controls.Add(Note("ONの場合、初回だけUACが表示されます。HidHide設定変更後に自動でデバイス再起動を試みます。ゲームから元デバイスが見える場合はUSBを一度抜き差ししてください。"));
 
@@ -159,6 +160,7 @@ public sealed class MainForm : Form
         _hide.CheckedChanged += (_, _) => SaveUiToSettings();
         _start.Click += async (_, _) => await ToggleStartAsync();
         _recover.Click += async (_, _) => await RecoverHiddenAsync();
+        _inspectHidden.Click += async (_, _) => await InspectHiddenAsync();
         _uiTimer.Tick += (_, _) => UpdateMonitor();
         FormClosing += async (_, _) =>
         {
@@ -410,6 +412,100 @@ public sealed class MainForm : Form
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
+    private async Task InspectHiddenAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+        _inspectHidden.Enabled = false;
+        _recover.Enabled = false;
+        _start.Enabled = false;
+        try
+        {
+            var hidden = await _hidHide.GetHiddenDevicesAsync();
+            if (hidden.Count == 0)
+            {
+                MessageBox.Show(this, "HidHideに登録されている非表示デバイスはありません。",
+                    "HidHide登録一覧", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var dialog = new Form
+            {
+                Text = "HidHideの非表示登録を個別解除",
+                StartPosition = FormStartPosition.CenterParent,
+                Width = 850,
+                Height = 510,
+                MinimumSize = new Size(650, 400),
+                Font = Font
+            };
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, Padding = new Padding(12)
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            dialog.Controls.Add(root);
+            root.Controls.Add(new Label
+            {
+                Text = "HidHideが実際に非表示登録しているデバイスです。解除するものだけ選択してください。\n他のツールが管理するデバイスも含まれるため、一括選択はしません。",
+                AutoSize = true, MaximumSize = new Size(800, 0)
+            }, 0, 0);
+
+            var list = new CheckedListBox
+            {
+                Dock = DockStyle.Fill, CheckOnClick = true,
+                HorizontalScrollbar = true, IntegralHeight = false
+            };
+            foreach (var entry in hidden)
+                list.Items.Add(entry.DisplayName + "  [" + entry.InstancePath + "]");
+            root.Controls.Add(list, 0, 1);
+
+            var actions = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, AutoSize = true
+            };
+            var cancel = new Button { Text = "閉じる", Width = 100, DialogResult = DialogResult.Cancel };
+            var unhide = new Button { Text = "選択した登録を解除", Width = 170, DialogResult = DialogResult.OK };
+            actions.Controls.Add(cancel);
+            actions.Controls.Add(unhide);
+            root.Controls.Add(actions, 0, 2);
+            dialog.AcceptButton = unhide;
+            dialog.CancelButton = cancel;
+
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            var paths = list.CheckedIndices.Cast<int>()
+                .Select(index => hidden[index].InstancePath).ToList();
+            if (paths.Count == 0)
+            {
+                MessageBox.Show(this, "解除するデバイスを選択してください。");
+                return;
+            }
+
+            var message = "以下の " + paths.Count + " 件をHidHideの非表示対象から削除します。\n\n" +
+                string.Join("\n", list.CheckedIndices.Cast<int>().Select(i => hidden[i].DisplayName)) +
+                "\n\n実行しますか？";
+            if (MessageBox.Show(this, message, "解除対象の最終確認",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+            await UnhideRecordedAsync(paths);
+            _status.Text = "選択したHidHide登録を解除しました。USB再接続後、再検索してください。";
+            RefreshDevices();
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "HidHide登録一覧の操作に失敗しました: " + ex.Message;
+            MessageBox.Show(this, ex.Message, "HidHideエラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _busy = false;
+            _inspectHidden.Enabled = true;
+            _recover.Enabled = true;
+            _start.Enabled = true;
+        }
+    }
+
     private async Task RecoverHiddenAsync()
     {
         if (_busy) return;
@@ -426,6 +522,7 @@ public sealed class MainForm : Form
 
         _busy = true;
         _recover.Enabled = false;
+        _inspectHidden.Enabled = false;
         _start.Enabled = false;
         try
         {
@@ -442,6 +539,7 @@ public sealed class MainForm : Form
         {
             _busy = false;
             _recover.Enabled = true;
+            _inspectHidden.Enabled = true;
             _start.Enabled = true;
         }
     }
@@ -479,6 +577,7 @@ public sealed class MainForm : Form
         _busy = true;
         _start.Enabled = false;
         _recover.Enabled = false;
+        _inspectHidden.Enabled = false;
         var hiddenThisAttempt = new List<string>();
         try
         {
@@ -543,6 +642,7 @@ public sealed class MainForm : Form
             _busy = false;
             _start.Enabled = true;
             _recover.Enabled = true;
+            _inspectHidden.Enabled = true;
         }
     }
 
